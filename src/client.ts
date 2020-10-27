@@ -473,9 +473,14 @@ export class SubscriptionClient {
   }
 
   // send message, or queue it if connection is not open
-  private sendMessageRaw(message: Object) {
+  private sendMessageRaw(message: any) {
     switch (this.status) {
       case this.wsImpl.OPEN:
+        if (message.type === MessageTypes.GQL_STOP) {
+          this.eventEmitter.emit('error', new Error(`Client is closing. Preventing message to be sent: ${message.type}`));
+          break;
+        }
+
         let serializedMessage: string = JSON.stringify(message);
         try {
           JSON.parse(serializedMessage);
@@ -483,7 +488,7 @@ export class SubscriptionClient {
           this.eventEmitter.emit('error', new Error(`Message must be JSON-serializable. Got: ${message}`));
         }
 
-        this.client.send(serializedMessage);
+        this.client?.send(serializedMessage);
         break;
       case this.wsImpl.CONNECTING:
         this.unsentMessagesQueue.push(message);
@@ -569,10 +574,8 @@ export class SubscriptionClient {
 
           // Send CONNECTION_INIT message, no need to wait for connection to success (reduce roundtrips)
           this.sendMessage(undefined, MessageTypes.GQL_CONNECTION_INIT, connectionParams);
-          this.flushUnsentMessagesQueue();
         } catch (error) {
           this.sendMessage(undefined, MessageTypes.GQL_CONNECTION_ERROR, error);
-          this.flushUnsentMessagesQueue();
         }
       }
     };
@@ -603,6 +606,11 @@ export class SubscriptionClient {
       opId = parsedMessage.id;
     } catch (e) {
       throw new Error(`Message must be JSON-parseable. Got: ${receivedData}`);
+    }
+
+    if (MessageTypes.GQL_CONNECTION_ACK === parsedMessage.type && !this.operations[opId]) {
+      this.flushUnsentMessagesQueue();
+      return;
     }
 
     if (
